@@ -1,15 +1,54 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, render_template
 from routes.tasks import tasks_bp
+import psycopg2
 
 app = Flask(__name__)
 
+def get_db_connection():
+    return psycopg2.connect(
+        host="cloud-db.c7cm4i8si6p3.eu-west-2.rds.amazonaws.com",
+        database="tasksdb",
+        user="postgres",
+        password="postgres123"
+    )
+
+@app.route("/")
+def home():
+    return render_template("index.html")
+
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok"})
+    return jsonify({
+        "status": "healthy",
+        "service": "pipeline working "
+    })
+
+@app.route("/db-test")
+def db_test():
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS test (
+            id SERIAL PRIMARY KEY,
+            name TEXT
+        );
+    """)
+
+    cur.execute("INSERT INTO test (name) VALUES ('Suji ');")
+    conn.commit()
+
+    cur.execute("SELECT * FROM test;")
+    rows = cur.fetchall()
+
+    cur.close()
+    conn.close()
+
+    return {"data": rows}
 
 app.register_blueprint(tasks_bp, url_prefix="/tasks")
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=5000)
 
     
