@@ -12,6 +12,10 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v3
 
+    - name: Set Image Tag
+      id: vars
+      run: echo "TAG=${GITHUB_SHA::7}" >> $GITHUB_ENV
+
     - name: Configure AWS Credentials
       uses: aws-actions/configure-aws-credentials@v2
       with:
@@ -28,16 +32,37 @@ jobs:
 
     - name: Tag Image
       run: |
-        docker tag app:latest ${{ steps.login-ecr.outputs.registry }}/cloud-task-manager:latest
+        docker tag app:latest ${{ steps.login-ecr.outputs.registry }}/cloud-task-manager:${{ env.TAG }}
 
     - name: Push Image
       run: |
-        docker push ${{ steps.login-ecr.outputs.registry }}/cloud-task-manager:latest
+        docker push ${{ steps.login-ecr.outputs.registry }}/cloud-task-manager:${{ env.TAG }}
 
-    - name: Deploy to ECS
+    #  REGISTER NEW TASK DEFINITION
+    - name: Get current task definition
+      run: |
+        aws ecs describe-task-definition \
+          --task-definition cloud-task \
+          --query taskDefinition > task-def.json
+    
+    - name: Install jq
+      run: sudo apt-get install -y jq
+
+
+    - name: Update image in task definition
+      run: |
+        jq --arg IMAGE "${{ steps.login-ecr.outputs.registry }}/cloud-task-manager:${{ env.TAG }}" \
+        '.containerDefinitions[0].image = $IMAGE' \
+        task-def.json > new-task-def.json
+
+    - name: Register new task definition
+      run: |
+        aws ecs register-task-definition \
+          --cli-input-json file://new-task-def.json
+
+    - name: Deploy new task definition
       run: |
         aws ecs update-service \
           --cluster cloud-cluster \
           --service cloud-service \
-          --force-new-deployment \
-          --region eu-west-2
+          --force-new-deployment
