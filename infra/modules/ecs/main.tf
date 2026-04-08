@@ -11,16 +11,30 @@ resource "aws_ecs_task_definition" "app" {
 
   execution_role_arn = aws_iam_role.ecs_task_execution_role.arn
 
-  container_definitions = jsonencode([{
-    name  = "app"
-    image = "${var.ecr_repo_url}:latest"
+  container_definitions = jsonencode([
+    {
+      name  = "app"
+      image = "${var.ecr_repo_url}:latest"
 
-    portMappings = [{
-      containerPort = 5000
-      hostPort      = 5000
-      protocol      = "tcp"
-    }]
-  }])
+      portMappings = [
+        {
+          containerPort = 5000
+          hostPort      = 5000
+          protocol      = "tcp"
+        }
+      ]
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = "/ecs/cloud-task"
+          awslogs-region        = "eu-west-2"
+          awslogs-stream-prefix = "ecs"
+          awslogs-create-group  = "true"
+        }
+      }
+    }
+  ])
 }
 
 resource "aws_ecs_service" "app" {
