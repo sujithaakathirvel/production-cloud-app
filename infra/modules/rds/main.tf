@@ -11,7 +11,7 @@ resource "aws_db_instance" "db" {
   allocated_storage = 20
 
   username = "postgres"
-  password = "postgres123"
+  password = var.db_password
 
   db_name = "tasksdb"
 

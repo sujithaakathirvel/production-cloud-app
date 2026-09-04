@@ -15,3 +15,7 @@ venv/
 # Docker
 *.log
 
+
+# JMeter
+performance/results.jtl
+performance/report/

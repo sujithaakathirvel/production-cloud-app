@@ -1,4 +1,5 @@
 from flask import Flask, jsonify, render_template
+import os
 from routes.tasks import tasks_bp
 import psycopg2
 
@@ -6,10 +7,10 @@ app = Flask(__name__)
 
 def get_db_connection():
     return psycopg2.connect(
-        host="cloud-db.c7cm4i8si6p3.eu-west-2.rds.amazonaws.com",
-        database="tasksdb",
-        user="postgres",
-        password="postgres123"
+        host=os.environ["DB_HOST"],
+        database=os.environ["DB_NAME"],
+        user=os.environ["DB_USER"],
+        password=os.environ["DB_PASSWORD"]
     )
 
 @app.route("/")
