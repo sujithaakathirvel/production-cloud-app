@@ -1,141 +1,261 @@
 # Production Cloud Application on AWS
 
-A production-style cloud application built on AWS demonstrating containerized workloads, infrastructure as code, CI/CD automation, and a self-healing, fault-tolerant architecture.
+A production-style containerized Flask application deployed on AWS to demonstrate Infrastructure as Code, container orchestration, CI/CD, secure networking, monitoring, performance testing, and failure recovery.
 
 ---
 
-## Architecture Overview
+## Architecture
 
-![Architecture](screenshots/architecture-diagram.png)
+![Architecture](screenshots/Architecture-diagram.jpg)
 
----
+The application runs inside an AWS VPC across two Availability Zones.
 
-## Architecture Decisions
+**Traffic flow:**
 
-- **Amazon Elastic Container Service (Fargate)** was selected to eliminate EC2 management and enable serverless container orchestration with automatic scaling.
-- **Private subnets** are used for ECS services and the database to ensure no direct internet exposure and enforce network isolation.
-- **Application Load Balancer (ALB)** distributes incoming traffic and performs health checks to maintain service availability.
-- **Amazon RDS (PostgreSQL)** provides reliable, managed relational data storage with automated backups.
-- The system follows a **stateless, horizontally scalable design**, allowing containers to scale independently.
+```text
+Internet
+   ↓
+Application Load Balancer :80
+   ↓
+ECS Fargate :5000
+   ↓
+RDS PostgreSQL :5432
+```
 
----
+- Application Load Balancer receives public HTTP traffic.
+- ECS Fargate runs the containerized Flask application.
+- RDS PostgreSQL provides the database layer.
+- RDS is configured with `publicly_accessible = false`.
+- Security groups restrict communication between each layer.
+- ECS tasks run in the public subnets with public IPs, but direct application access is restricted by security groups.
 
 ## Tech Stack
 
-**Cloud Services**
-- AWS ECS (Fargate)  
-- AWS RDS (PostgreSQL)  
-- AWS Application Load Balancer  
-- AWS ECR  
-- AWS CloudWatch  
-- AWS Lambda  
-- AWS VPC (Public & Private Subnets)  
+**AWS**
+- Amazon VPC
+- Application Load Balancer
+- Amazon ECS Fargate
+- Amazon ECR
+- Amazon RDS PostgreSQL
+- AWS Secrets Manager
+- Amazon CloudWatch
+- AWS IAM
 
-**DevOps & Tools**
-- Terraform (Infrastructure as Code)  
-- Docker (Containerization)  
-- GitHub Actions (CI/CD)  
+**DevOps & Testing**
+- Terraform
+- Docker
+- GitHub Actions
+- Apache JMeter
+- AWS CLI
 
----
+**Application**
+- Python
+- Flask
+- PostgreSQL
 
 ## Key Features
 
-- Containerized backend deployed on ECS Fargate  
-- Fully reproducible infrastructure using Terraform  
-- Automated CI/CD pipeline with GitHub Actions  
-- Load-balanced architecture using ALB  
-- Real-time monitoring with CloudWatch  
-- **Self-healing mechanism using Lambda + CloudWatch alarms**  
-- Designed for **high availability and fault tolerance**
-
----
-
-## Key Highlight
-
-> Implemented an automated self-healing mechanism where CloudWatch alarms trigger a Lambda function to restart ECS services without manual intervention.
-
----
-
-## CI/CD Pipeline
-
-- Code push triggers GitHub Actions workflow  
-- Docker image is built and tagged (latest + commit SHA)  
-- Image is pushed to Amazon ECR  
-- ECS service is updated with the new image  
-- Rolling deployments ensure **zero downtime**
-
----
+- Containerized Flask application deployed on ECS Fargate
+- Infrastructure provisioned using Terraform
+- Docker images stored in Amazon ECR
+- Application traffic routed through an Application Load Balancer
+- PostgreSQL database hosted on Amazon RDS
+- Database password retrieved from AWS Secrets Manager
+- ECS application logs sent to CloudWatch Logs
+- Automated CI/CD pipeline using GitHub Actions
+- ECS task failure recovery tested
+- ECS horizontal scaling tested
+- Application performance tested with Apache JMeter
 
 ## Security
 
-- Only ALB exposes public HTTP/HTTPS traffic  
-- ECS services accept traffic only from ALB security group  
-- RDS is deployed in a private subnet and not publicly accessible  
-- IAM roles follow the principle of least privilege  
-- Secrets are managed using AWS SSM Parameter Store / Secrets Manager  
+Security groups enforce layered access between the application components:
 
----
+- **ALB Security Group:** allows HTTP traffic on port 80 from the internet.
+- **ECS Security Group:** allows port 5000 only from the ALB security group.
+- **RDS Security Group:** allows PostgreSQL traffic on port 5432 only from the ECS security group.
+- RDS is configured with `publicly_accessible = false`.
+- Database credentials are stored in AWS Secrets Manager rather than hardcoded in the application.
+- ECS retrieves the database password using its IAM task execution role.
+- Terraform state and generated performance results are excluded from Git.
+
+## Engineering Decisions & Challenges
+
+### Secure Database Credentials
+
+During development, the application initially used a hardcoded database password.
+
+This was refactored so the Flask application reads the database password from the ECS container environment, while the actual secret value is stored in AWS Secrets Manager.
+
+```text
+AWS Secrets Manager
+        ↓
+   ECS Task
+        ↓
+   Flask App
+        ↓
+ PostgreSQL
+```
+
+This removed the hardcoded credential from the application source code and introduced a more appropriate secret-management pattern.
+
+### Network Access
+
+RDS was configured with:
+
+```text
+publicly_accessible = false
+```
+
+Although ECS tasks run in public subnets, direct access to the application container is restricted through security groups.
+
+Only the ALB security group can access ECS on port 5000, while RDS accepts PostgreSQL connections only from the ECS security group.
+
+### Terraform & AWS Permissions
+
+During deployment, Terraform encountered AWS Secrets Manager permission issues involving secret creation and resource-policy access.
+
+The required IAM permissions were investigated and corrected, after which the infrastructure deployed successfully.
+
+The restored Secrets Manager secret was also imported into Terraform state to bring the existing AWS resource under Terraform management.
+
+## CI/CD
+
+The deployment pipeline is triggered when changes are pushed to the main branch.
+
+```text
+GitHub
+   ↓
+GitHub Actions
+   ↓
+Docker Build
+   ↓
+Amazon ECR
+   ↓
+Register ECS Task Definition
+   ↓
+Update ECS Service
+```
+
+The workflow:
+
+1. Checks out the repository.
+2. Builds the Docker image.
+3. Tags the image using the Git commit SHA.
+4. Pushes the image to Amazon ECR.
+5. Registers an updated ECS task definition.
+6. Updates the ECS service with the new deployment.
+
+Recorded GitHub Actions deployment: **43 seconds**.
+
+## Performance Testing
+
+Apache JMeter was used to test the application through the public Application Load Balancer.
+
+**Test Configuration**
+- 10 concurrent users
+- 10 requests per user
+- 100 total requests
+- `/health` endpoint
+
+**Results**
+
+| Metric | Result |
+|---|---|
+| Requests | 100 |
+| Error rate | 0% |
+| Average response time | 11.94 ms |
+| Median | 10 ms |
+| P95 | 24 ms |
+| Minimum | 7 ms |
+| Maximum | 69 ms |
+| Throughput | 22.02 req/s |
+
+This was a small-scale performance test intended to validate application behaviour rather than represent production-scale load.
+
+## Reliability & Scaling Tests
+
+### ECS Failure Recovery
+
+An ECS task was intentionally stopped to simulate a container failure.
+
+The ECS service detected that the running task count was below the desired count and launched a replacement task.
+
+The replacement:
+- Reached the Running state
+- Registered with the Application Load Balancer
+- Passed the ALB health check
+- Successfully served the `/health` endpoint
+
+### Horizontal Scaling
+
+The ECS service was tested by changing the desired task count:
+
+```text
+1 task → 2 tasks → 1 task
+```
+
+Results:
+- ECS reached Running: 2
+- Both active ALB targets became healthy
+- The service was successfully scaled back to 1 task
 
 ## Monitoring & Observability
 
-- CloudWatch collects logs and metrics from ECS services  
-- Alarms are configured for CPU utilization and failure scenarios  
-- Logs are used for debugging and performance monitoring  
-
----
-
-## Resilience & Self-Healing
-
-- ALB health checks detect unhealthy containers  
-- ECS automatically replaces failed tasks  
-- CloudWatch alarms trigger a Lambda function to restart ECS services  
-- System is designed to recover automatically from failures  
-
----
+- ECS container logs are sent to Amazon CloudWatch Logs.
+- CloudWatch Logs were used to verify application requests and troubleshoot behaviour.
+- ALB health checks use the `/health` endpoint.
+- Application health was verified through the load balancer during testing.
+- CloudWatch log retention was configured for 7 days.
 
 ## Screenshots
 
-### Application Running
-![App](screenshots/alb-app-live.png)
+- ![Application Running](screenshots/alb-app-live.png)
+- ![ECS Service](screenshots/ecs-service-running.png)
+- ![CI/CD Pipeline](screenshots/github-actions.png)
 
-### ECS Service Running
-![ECS](screenshots/ecs-service-running.png)
+## Project Structure
 
-### CI/CD Pipeline Execution
-![CI/CD](screenshots/github-actions.png)
+```text
+production-cloud-application-aws/
+├── app/
+│   ├── Dockerfile
+│   ├── main.py
+│   ├── requirements.txt
+│   ├── models/
+│   ├── routes/
+│   ├── services/
+│   └── templates/
+│       └── index.html
+├── infra/
+│   ├── main.tf
+│   ├── provider.tf
+│   ├── variables.tf
+│   ├── outputs.tf
+│   └── modules/
+├── performance/
+│   └── health-test.jmx
+├── screenshots/
+└── .github/
+    └── workflows/
+        └── deploy.yml
+```
 
-### Self-Healing Logs (Lambda Trigger)
-![Lambda](screenshots/lambda-self-healing-logs.png)
+## What This Project Demonstrates
 
----
 
-## How It Works
-
-1. User sends request to Application Load Balancer  
-2. ALB routes traffic to ECS containers (private subnet)  
-3. Backend services interact with RDS database  
-4. CI/CD pipeline deploys updates automatically  
-5. CloudWatch monitors system health  
-6. Lambda function automatically triggers recovery actions upon detecting failures 
-
----
-
-## Outcome
-
-- Fully automated deployment pipeline  
-- Production-style cloud architecture  
-- Fault-tolerant system with self-healing capabilities  
-- Demonstrates real-world cloud engineering practices  
-
----
-
-## Lessons Learned
-
-- Designing secure VPC architectures with public/private isolation  
-- Managing containerized workloads using ECS Fargate  
-- Building CI/CD pipelines for automated deployments  
-- Implementing monitoring, alerting, and recovery mechanisms  
-- Debugging and maintaining distributed cloud systems  
-
----
-
+- Infrastructure as Code with Terraform
+- AWS VPC and networking
+- Containerization with Docker
+- ECS Fargate orchestration
+- Application Load Balancing
+- Amazon ECR
+- Managed PostgreSQL with RDS
+- Secrets management
+- IAM roles and permissions
+- GitHub Actions CI/CD
+- CloudWatch logging
+- Performance testing with JMeter
+- ECS failure recovery
+- Horizontal container scaling
+- Troubleshooting real AWS deployment issues
